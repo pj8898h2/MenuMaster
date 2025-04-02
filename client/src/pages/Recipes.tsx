@@ -1,20 +1,26 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { Recipe } from "@/lib/types";
 import RecipeCard from "@/components/RecipeCard";
+import RecipeImportForm from "@/components/RecipeImportForm";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { apiRequest } from "@/lib/queryClient";
+import { PlusIcon } from "lucide-react";
 
 export default function Recipes() {
   const [searchQuery, setSearchQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [cookTime, setCookTime] = useState("all");
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const { toast } = useToast();
   const [_, setLocation] = useLocation();
+  const queryClient = useQueryClient();
 
   // Build query parameters
   const queryParams = new URLSearchParams();
@@ -40,6 +46,47 @@ export default function Recipes() {
     e.preventDefault();
     // The query will be automatically refetched when queryKey changes
   };
+  
+  // レシピ作成のミューテーション
+  const createRecipeMutation = useMutation({
+    mutationFn: async (newRecipe: Partial<Recipe>) => {
+      const response = await fetch('/api/recipes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newRecipe),
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'レシピの作成に失敗しました');
+      }
+      
+      return response.json();
+    },
+    onSuccess: () => {
+      // レシピリストを更新
+      queryClient.invalidateQueries({ queryKey: ['/api/recipes'] });
+      setImportDialogOpen(false);
+      toast({
+        title: '成功',
+        description: 'レシピが正常に追加されました',
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'エラー',
+        description: error instanceof Error ? error.message : 'レシピの追加に失敗しました',
+      });
+    },
+  });
+  
+  const handleRecipeImported = (recipe: Partial<Recipe>) => {
+    createRecipeMutation.mutate(recipe);
+  };
 
   return (
     <section>
@@ -48,6 +95,23 @@ export default function Recipes() {
           <h2 className="font-heading font-bold text-2xl text-neutral-800 mb-4 md:mb-0">レシピ検索</h2>
           
           <div className="flex flex-col md:flex-row gap-3">
+            <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="bg-primary text-white hover:bg-primary/90">
+                  <PlusIcon className="mr-2 h-4 w-4" />
+                  新しいレシピ
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[600px]">
+                <DialogHeader>
+                  <DialogTitle>レシピをインポート</DialogTitle>
+                  <DialogDescription>
+                    URLからレシピをインポートするか、手動で情報を入力してください。
+                  </DialogDescription>
+                </DialogHeader>
+                <RecipeImportForm onRecipeImported={handleRecipeImported} />
+              </DialogContent>
+            </Dialog>
             <form onSubmit={handleSearch} className="relative">
               <Input
                 type="text"

@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertRecipeSchema, insertMealPlanSchema, insertShoppingListItemSchema } from "@shared/schema";
 import { z } from "zod";
+import { scrapeRecipe } from "./scraper";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // API routes - All routes are prefixed with /api
@@ -129,7 +130,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/meal-plans", async (req, res) => {
     try {
-      const validatedData = insertMealPlanSchema.parse(req.body);
+      // 日付文字列を処理
+      const { date, ...rest } = req.body;
+      const parsedData = {
+        ...rest,
+        date: date ? new Date(date) : undefined,
+      };
+
+      const validatedData = insertMealPlanSchema.parse(parsedData);
       const mealPlan = await storage.createMealPlan(validatedData);
       res.status(201).json(mealPlan);
     } catch (error) {
@@ -143,7 +151,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/meal-plans/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const validatedData = insertMealPlanSchema.partial().parse(req.body);
+      
+      // 日付文字列を処理
+      const { date, ...rest } = req.body;
+      const parsedData = {
+        ...rest,
+        date: date ? new Date(date) : undefined,
+      };
+      
+      const validatedData = insertMealPlanSchema.partial().parse(parsedData);
       const mealPlan = await storage.updateMealPlan(id, validatedData);
       
       if (!mealPlan) {
@@ -247,6 +263,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid meal plan IDs", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to generate shopping list" });
+    }
+  });
+  
+  // Import recipe from URL
+  app.post("/api/recipes/import", async (req, res) => {
+    try {
+      const schema = z.object({
+        url: z.string().url(),
+      });
+      
+      const { url } = schema.parse(req.body);
+      
+      try {
+        // URLからレシピデータをスクレイプ
+        const recipeData = await scrapeRecipe(url);
+        
+        // 必須フィールドを確認（レシピ作成に必要な最低限のデータ）
+        if (!recipeData.name) {
+          return res.status(400).json({ message: "レシピの取得に失敗しました。正しいレシピページのURLか確認してください。" });
+        }
+        
+        // 一時的にデータをクライアントに返す（まだストレージには保存せず）
+        res.status(200).json({ 
+          status: "success", 
+          data: recipeData,
+          message: "レシピが正常に取得されました。データを確認してレシピを保存してください。"
+        });
+      } catch (error) {
+        console.error("Recipe import error:", error);
+        res.status(400).json({ 
+          status: "error", 
+          message: error instanceof Error ? error.message : "URLからのレシピ取得に失敗しました。"
+        });
+      }
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "有効なURLを入力してください", errors: error.errors });
+      }
+      res.status(500).json({ message: "レシピのインポート処理に失敗しました" });
     }
   });
 
